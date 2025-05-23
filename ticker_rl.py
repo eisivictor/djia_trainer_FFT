@@ -4,7 +4,8 @@ import os
 import logging
 
 def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, learning_rate, epsilon_initial, 
-               epsilon_final, epsilon_decay, memory_size, episodes, initial_capital, period, use_fft=True):
+               epsilon_final, epsilon_decay, memory_size, episodes, initial_capital, period, use_fft=True,
+               buying_fee_pct=0.005, selling_fee_pct=0.005):
     """
     Train the DQN trading model and save the weights
     
@@ -31,8 +32,11 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     data = get_historical_data(ticker, period=period)
     
     # Create training environment
-    train_env = StockTradingEnv(data, initial_balance=initial_capital,
-                               lookback_window_size=lookback, use_fft=use_fft)
+    train_env = StockTradingEnv(
+        data, initial_balance=initial_capital,
+        lookback_window_size=lookback, use_fft=use_fft,
+        buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct
+    )
     
     # Define state and action sizes
     state_size = train_env.observation_space.shape
@@ -57,7 +61,8 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     
     return agent, data
 
-def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, agent=None, data=None, use_fft=True):
+def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, agent=None, data=None, use_fft=True,
+               buying_fee_pct=0.0015, selling_fee_pct=0.0015):
     """
     Test the trained DQN model on historical data
     
@@ -83,8 +88,11 @@ def test_model(logger, ticker, lookback, initial_capital, period, model_weights_
         #from IPython.core.debugger import Pdb; Pdb().set_trace()
         
         # Create testing environment to get state and action sizes
-        test_env = StockTradingEnv(data, initial_balance=initial_capital,
-                                  lookback_window_size=lookback, use_fft=use_fft)
+        test_env = StockTradingEnv(
+            data, initial_balance=initial_capital,
+            lookback_window_size=lookback, use_fft=use_fft,
+            buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct
+        )
         
         # Define state and action sizes
         state_size = test_env.observation_space.shape

@@ -57,6 +57,10 @@ def get_parser():
                         help='Enable parallel training using multiple threads')
     parser.add_argument('--workers', type=int, default=4,
                         help='Number of worker threads for parallel training')    
+    parser.add_argument('--buying-fee-pct', type=float, default=0.005,
+                        help='Percentage fee for each buy transaction (e.g., 0.0015)')
+    parser.add_argument('--selling-fee-pct', type=float, default=0.005,
+                        help='Percentage fee for each sell transaction (e.g., 0.0015)')
     
     return parser
 
@@ -117,7 +121,9 @@ def get_training_params(args):
         "memory_size": args.memory_size,
         "episodes": args.episodes,
         "initial_capital": args.initial_capital,
-        "period": args.period
+        "period": args.period,
+        "buying_fee_pct": args.buying_fee_pct,
+        "selling_fee_pct": args.selling_fee_pct
     }
 
 def train_ticker(ticker, training_params, models_dir, args, timestamp):
@@ -133,15 +139,19 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
     # Remove any existing handlers to avoid duplicate logging
     for handler in thread_logger.handlers[:]:
         thread_logger.removeHandler(handler)
+    thread_logger.propagate = False  # Stop log propagation to parent logger
     
-    # Add file handler for this thread
+    # Add file handler for this thread with timestamp format
     file_handler = logging.FileHandler(thread_log_file)
+    formatter = logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.INFO)
     thread_logger.addHandler(file_handler)
     
-    # Add console handler if not in parallel mode
+    # Only add console handler if not in parallel mode
     if not args.parallel:
         console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)  # Use same formatter for console
         console_handler.setLevel(logging.INFO)
         thread_logger.addHandler(console_handler)
     
