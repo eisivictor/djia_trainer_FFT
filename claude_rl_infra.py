@@ -136,7 +136,7 @@ class DQNAgent:
 
 # Custom environment for stock trading
 class StockTradingEnv(gym.Env):
-    def __init__(self, df, initial_balance=10000, lookback_window_size=20, use_fft=False, buying_fee_pct=0.0015, selling_fee_pct=0.0015):
+    def __init__(self, df, initial_balance=10000, lookback_window_size=20, use_fft=False, buying_fee_pct=0.05, selling_fee_pct=0.05):
         super(StockTradingEnv, self).__init__()
         self.df = df
         self.initial_balance = initial_balance

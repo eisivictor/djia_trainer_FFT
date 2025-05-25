@@ -58,9 +58,9 @@ def get_parser():
     parser.add_argument('--workers', type=int, default=4,
                         help='Number of worker threads for parallel training')    
     parser.add_argument('--buying-fee-pct', type=float, default=0.005,
-                        help='Percentage fee for each buy transaction (e.g., 0.0015)')
+                        help='Percentage fee for each buy transaction (e.g., 0.005)')
     parser.add_argument('--selling-fee-pct', type=float, default=0.005,
-                        help='Percentage fee for each sell transaction (e.g., 0.0015)')
+                        help='Percentage fee for each sell transaction (e.g., 0.005)')
     
     return parser
 

@@ -62,7 +62,7 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     return agent, data
 
 def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, agent=None, data=None, use_fft=True,
-               buying_fee_pct=0.0015, selling_fee_pct=0.0015):
+               buying_fee_pct=0.005, selling_fee_pct=0.005):
     """
     Test the trained DQN model on historical data
     
