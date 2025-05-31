@@ -61,6 +61,12 @@ def get_parser():
                         help='Percentage fee for each buy transaction (e.g., 0.005)')
     parser.add_argument('--selling-fee-pct', type=float, default=0.005,
                         help='Percentage fee for each sell transaction (e.g., 0.005)')
+    parser.add_argument('--min-holding-days', type=int, default=0,
+                        help='Minimum holding days for each trade')
+    parser.add_argument('--min_days_between_trades', type=int, default=0, 
+                        help='Minimum days that must pass between a sell and the next buy (default: 0)')
+    parser.add_argument('--remove-ohlcv', action='store_true',
+                        help='Remove OHLCV data from the training dataset to save space')
     
     return parser
 
@@ -123,7 +129,10 @@ def get_training_params(args):
         "initial_capital": args.initial_capital,
         "period": args.period,
         "buying_fee_pct": args.buying_fee_pct,
-        "selling_fee_pct": args.selling_fee_pct
+        "selling_fee_pct": args.selling_fee_pct,
+        "min_holding_days": args.min_holding_days,
+        "min_days_between_trades": args.min_days_between_trades,
+        "remove_ohlcv": args.remove_ohlcv
     }
 
 def train_ticker(ticker, training_params, models_dir, args, timestamp):

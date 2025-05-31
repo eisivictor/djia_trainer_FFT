@@ -136,7 +136,9 @@ class DQNAgent:
 
 # Custom environment for stock trading
 class StockTradingEnv(gym.Env):
-    def __init__(self, df, initial_balance=10000, lookback_window_size=20, use_fft=False, buying_fee_pct=0.05, selling_fee_pct=0.05):
+    def __init__(self, df, initial_balance=10000, lookback_window_size=20, use_fft=False, 
+                buying_fee_pct=0.05, selling_fee_pct=0.05, min_holding_days=0, 
+                min_days_between_trades=0, remove_ohlcv=False):
         super(StockTradingEnv, self).__init__()
         self.df = df
         self.initial_balance = initial_balance
@@ -146,7 +148,17 @@ class StockTradingEnv(gym.Env):
         # Actions: 0 = Hold, 1 = Buy, 2 = Sell
         self.action_space = spaces.Discrete(3)
 
-        self.features = ['Open', 'High', 'Low', 'Close', 'Volume',
+        if remove_ohlcv:
+            # Features: Technical indicators only
+            self.features = ['sma7', 'sma20', 'ema12', 'ema26', 'rsi',
+                             'macd', 'macd_signal', 'macd_hist',
+                             'bb_middle', 'bb_upper', 'bb_lower', 'bb_width',
+                             'adx', 'plus_di', 'minus_di',
+                             'stoch_k', 'stoch_d',
+                             'vwap', 'atr', 'obv', 'psar',
+                             'tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b']
+        else:
+            self.features = ['Open', 'High', 'Low', 'Close', 'Volume',
                    'sma7', 'sma20', 'ema12', 'ema26', 'rsi',
                    'macd', 'macd_signal', 'macd_hist',
                    'bb_middle', 'bb_upper', 'bb_lower', 'bb_width',
@@ -170,6 +182,14 @@ class StockTradingEnv(gym.Env):
         # Configure trading fees
         self.buying_fee_pct = buying_fee_pct
         self.selling_fee_pct = selling_fee_pct
+        
+        # Add minimum holding period tracking
+        self.min_holding_days = min_holding_days
+        self.last_buy_step = None
+        
+        # Add minimum days between trades
+        self.min_days_between_trades = min_days_between_trades
+        self.last_sell_step = None
 
         # Transaction history
         self.transactions = []
@@ -319,7 +339,9 @@ class StockTradingEnv(gym.Env):
         self.balance = self.initial_balance
         self.shares_held = 0
         self.net_worth = self.initial_balance
-
+        self.last_buy_step = None  # Reset last buy step
+        self.last_sell_step = None  # Reset last sell step
+        
         return self._get_observation()
 
     def _get_observation(self):
@@ -359,9 +381,17 @@ class StockTradingEnv(gym.Env):
 
         # Execute action
         if action == 1:  # Buy
+            # Check if enough days have passed since last sell
+            can_buy = True
+            if self.last_sell_step is not None:
+                days_since_sell = self.current_step - self.last_sell_step
+                if days_since_sell < self.min_days_between_trades:
+                    can_buy = False
+            
             # Calculate max shares that can be bought
             max_possible_shares = self.balance // self.current_price
-            if max_possible_shares > 0:
+                    
+            if can_buy and max_possible_shares > 0:
                 # Apply buying fee
                 buying_fee = max_possible_shares * self.current_price * self.buying_fee_pct
                 effective_balance = self.balance - buying_fee
@@ -375,6 +405,7 @@ class StockTradingEnv(gym.Env):
 
                     self.shares_held += max_shares
                     self.balance -= total_cost
+                    self.last_buy_step = self.current_step  # Record buy step
 
                     # Record transaction
                     self.transactions.append({
@@ -387,23 +418,27 @@ class StockTradingEnv(gym.Env):
                     })
 
         elif action == 2:  # Sell
+            # Check if minimum holding period has passed
             if self.shares_held > 0:
-                sale_value = self.shares_held * self.current_price
-                fee = sale_value * self.selling_fee_pct
-                net_sale_value = sale_value - fee
+                if self.last_buy_step is None or (self.current_step - self.last_buy_step) >= self.min_holding_days:
+                    sale_value = self.shares_held * self.current_price
+                    fee = sale_value * self.selling_fee_pct
+                    net_sale_value = sale_value - fee
 
-                # Record transaction before updating shares
-                self.transactions.append({
-                    'date': current_date,
-                    'type': 'SELL',
-                    'shares': self.shares_held,
-                    'price': self.current_price,
-                    'value': net_sale_value,
-                    'fee': fee
-                })
+                    # Record transaction before updating shares
+                    self.transactions.append({
+                        'date': current_date,
+                        'type': 'SELL',
+                        'shares': self.shares_held,
+                        'price': self.current_price,
+                        'value': net_sale_value,
+                        'fee': fee
+                    })
 
-                self.balance += net_sale_value
-                self.shares_held = 0
+                    self.balance += net_sale_value
+                    self.shares_held = 0
+                    self.last_buy_step = None  # Reset last buy step
+                    self.last_sell_step = self.current_step  # Record sell step
 
         # Update net worth
         self.net_worth = self.balance + self.shares_held * self.current_price

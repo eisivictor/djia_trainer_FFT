@@ -5,7 +5,8 @@ import logging
 
 def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, learning_rate, epsilon_initial, 
                epsilon_final, epsilon_decay, memory_size, episodes, initial_capital, period, use_fft=True,
-               buying_fee_pct=0.005, selling_fee_pct=0.005):
+               buying_fee_pct=0.005, selling_fee_pct=0.005, min_holding_days=0, min_days_between_trades=0,
+               remove_ohlcv=True):
     """
     Train the DQN trading model and save the weights
     
@@ -35,7 +36,8 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     train_env = StockTradingEnv(
         data, initial_balance=initial_capital,
         lookback_window_size=lookback, use_fft=use_fft,
-        buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct
+        buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct,
+        min_holding_days=min_holding_days, min_days_between_trades=min_days_between_trades, remove_ohlcv=remove_ohlcv
     )
     
     # Define state and action sizes
@@ -62,7 +64,7 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     return agent, data
 
 def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, agent=None, data=None, use_fft=True,
-               buying_fee_pct=0.005, selling_fee_pct=0.005):
+               buying_fee_pct=0.005, selling_fee_pct=0.005, remove_ohlcv=True):
     """
     Test the trained DQN model on historical data
     
@@ -91,7 +93,8 @@ def test_model(logger, ticker, lookback, initial_capital, period, model_weights_
         test_env = StockTradingEnv(
             data, initial_balance=initial_capital,
             lookback_window_size=lookback, use_fft=use_fft,
-            buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct
+            buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct,
+            min_holding_days=0, min_days_between_trades=0, remove_ohlcv=remove_ohlcv
         )
         
         # Define state and action sizes
@@ -140,6 +143,11 @@ def main():
     parser.add_argument('--period', type=int, default=1, help='Data period in years (default: 1)')
     parser.add_argument('--mode', type=str, choices=['train', 'test', 'both'], default='both', 
                         help='Operation mode: train, test, or both (default: both)')
+    parser.add_argument('--min_holding_days', type=int, default=0, 
+                       help='Minimum number of days to hold after buying (default: 0)')
+    parser.add_argument('--min_days_between_trades', type=int, default=0, 
+                        help='Minimum days that must pass between a sell and the next buy (default: 0)')
+    
     
     # Parse arguments
     args = parser.parse_args()
@@ -151,19 +159,20 @@ def main():
     if args.mode == 'train' or args.mode == 'both':
         # Train the model
         agent, data = train_model(
-            logger, args.ticker, args.lookback, args.gamma, args.batch_size, args.learning_rate,
+            logger, args.ticker, f"{args.ticker.lower()}_trading_model.keras", 
+            args.lookback, args.gamma, args.batch_size, args.learning_rate,
             args.epsilon_initial, args.epsilon_final, args.epsilon_decay,
-            args.memory_size, args.episodes, args.initial_capital, args.period
+            args.memory_size, args.episodes, args.initial_capital, args.period,
+            min_holding_days=args.min_holding_days, min_days_between_trades=args.min_days_between_trades
         )
         
         # If both modes, use the trained agent and data for testing
         if args.mode == 'both':
-            test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, agent=agent, data=data)
+            test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, 
+                      agent=agent, data=data, min_holding_days=args.min_holding_days)
     
     elif args.mode == 'test':
         # Only test the model using saved weights
         model_filename = f"{args.ticker.lower()}_trading_model.keras"
-        test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, model_weights_path=model_filename)
-
-if __name__ == "__main__":
-    main()
+        test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, 
+                  model_weights_path=model_filename, min_holding_days=args.min_holding_days)

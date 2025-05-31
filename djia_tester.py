@@ -314,6 +314,8 @@ def main():
                         help='Directory to look for existing saved models')
     parser.add_argument('--prefer-saved', action='store_true',
                         help='Prioritize using models from saved-models-dir if they exist')
+    parser.add_argument('--remove-ohlcv', action='store_true',
+                        help='Remove OHLCV data from the training dataset to save space')
     
     # Parse arguments
     args = parser.parse_args()
@@ -435,7 +437,8 @@ def main():
                 lookback=args.lookback,
                 initial_capital=args.initial_capital,
                 period=args.period,
-                model_weights_path=model_file  # Pass the model weights path
+                model_weights_path=model_file,  # Pass the model weights path
+                remove_ohlcv=args.remove_ohlcv,
             )
             
             # Add initial_capital to test_results for gain percentage calculation
