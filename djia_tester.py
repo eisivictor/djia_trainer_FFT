@@ -316,6 +316,14 @@ def main():
                         help='Prioritize using models from saved-models-dir if they exist')
     parser.add_argument('--remove-ohlcv', action='store_true',
                         help='Remove OHLCV data from the training dataset to save space')
+    parser.add_argument('--min-holding-days', type=int, default=0,
+                        help='Minimum holding days for each trade')
+    parser.add_argument('--min_days_between_trades', type=int, default=0, 
+                        help='Minimum days that must pass between a sell and the next buy (default: 0)')
+    parser.add_argument('--buying-fee-pct', type=float, default=0.005,
+                        help='Percentage fee for each buy transaction (e.g., 0.005)')
+    parser.add_argument('--selling-fee-pct', type=float, default=0.005,
+                        help='Percentage fee for each sell transaction (e.g., 0.005)')
     
     # Parse arguments
     args = parser.parse_args()
@@ -353,13 +361,6 @@ def main():
     print(f"Found {len(djia_tickers)} companies to process:")
     print(", ".join(djia_tickers))
 
-    # Define training parameters from command line arguments
-    testing_params = {
-        "lookback": args.lookback,
-        "initial_capital": args.initial_capital,
-        "period": args.period
-    }
-    
     # Log file setup
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(args.log_dir, f"testing_log_{timestamp}.txt")
@@ -387,26 +388,16 @@ def main():
     initialize_db(db_path)
 
     for i, ticker in enumerate(djia_tickers):
-        # Potential model file paths - order depends on prefer-saved flag
-        model_file_paths = []
+
+        target_file = f"{ticker.lower()}_trading_model.keras"    
+        if args.remove_ohlcv:
+            target_file = target_file.replace(".keras", "_no_ohlcv.keras")
+    
         if args.prefer_saved:
-            model_file_paths = [
-                os.path.join(args.saved_models_dir, f"{ticker.lower()}_trading_model.keras"),
-                os.path.join(args.models_dir, f"{ticker.lower()}_trading_model.keras"),
-            ]
+            model_file = os.path.join(args.saved_models_dir, target_file)
         else:
-            model_file_paths = [
-                os.path.join(args.models_dir, f"{ticker.lower()}_trading_model.keras"),
-                os.path.join(args.saved_models_dir, f"{ticker.lower()}_trading_model.keras"),
-            ]
-        
-        # Find the first existing model file
-        model_file = None
-        for path in model_file_paths:
-            if os.path.exists(path):
-                model_file = path
-                break
-        
+            model_file = os.path.join(args.models_dir, target_file)
+    
         # Check if model exists
         if not model_file:
             logger.info(f"\n[{i+1}/{len(djia_tickers)}] Skipping {ticker} (no trained model found)")
@@ -439,6 +430,10 @@ def main():
                 period=args.period,
                 model_weights_path=model_file,  # Pass the model weights path
                 remove_ohlcv=args.remove_ohlcv,
+                min_holding_days= args.min_holding_days,
+                min_days_between_trades=args.min_days_between_trades,
+                buying_fee_pct=args.buying_fee_pct,
+                selling_fee_pct=args.selling_fee_pct
             )
             
             # Add initial_capital to test_results for gain percentage calculation

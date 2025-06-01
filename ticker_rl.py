@@ -63,8 +63,10 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     
     return agent, data
 
-def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, agent=None, data=None, use_fft=True,
-               buying_fee_pct=0.005, selling_fee_pct=0.005, remove_ohlcv=True):
+def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, remove_ohlcv=True,
+               min_holding_days=0, min_days_between_trades=0, 
+               agent=None, data=None, use_fft=True,
+               buying_fee_pct=0.005, selling_fee_pct=0.005):
     """
     Test the trained DQN model on historical data
     
@@ -94,7 +96,7 @@ def test_model(logger, ticker, lookback, initial_capital, period, model_weights_
             data, initial_balance=initial_capital,
             lookback_window_size=lookback, use_fft=use_fft,
             buying_fee_pct=buying_fee_pct, selling_fee_pct=selling_fee_pct,
-            min_holding_days=0, min_days_between_trades=0, remove_ohlcv=remove_ohlcv
+            min_holding_days=min_holding_days, min_days_between_trades=min_days_between_trades, remove_ohlcv=remove_ohlcv
         )
         
         # Define state and action sizes
