@@ -167,6 +167,8 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
     # Define model filenames and paths
     model_filename = f"{ticker.lower()}_trading_model.keras"
     target_file = os.path.join(models_dir, model_filename)    
+    if args.remove_ohlcv:
+        target_file = target_file.replace(".keras", "_no_ohlcv.keras")
 
     # Check if model exists in either directory and skip if requested
     if args.skip_existing and os.path.exists(target_file):
@@ -174,7 +176,7 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
         return "skipped", 0, None, thread_log_file
     
     if not args.force_new and not os.path.exists(target_file):
-        thread_logger.info(f"[{ticker}] Status: Skipped (model NOT exists)")
+        thread_logger.info(f"[{ticker}] Status: Skipped (model {target_file} NOT exists)")
         return "skipped", 0, None, thread_log_file
 
     existing_weights_file = target_file
