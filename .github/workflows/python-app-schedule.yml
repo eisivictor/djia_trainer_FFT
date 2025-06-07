@@ -31,8 +31,8 @@ jobs:
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-        - name: Run training
-        run: python djia_trainer.py --epsilon-initial 0.2 --episodes 15 --epsilon-decay 15 --period 1 --tickers NVDA,MSFT --min-holding-days 5 --min_days_between_trades 2 --remove-ohlcv        
+    - name: Run training
+      run: python djia_trainer.py --epsilon-initial 0.2 --episodes 15 --epsilon-decay 15 --period 1 --tickers NVDA,MSFT --min-holding-days 5 --min_days_between_trades 2 --remove-ohlcv        
     - name: Run testing
       run: python djia_tester.py --overwrite-db --tickers NVDA,MSFT --remove-ohlcv --min-holding-days 5 --min_days_between_trades 2    
     - name: create buy sell jpg
