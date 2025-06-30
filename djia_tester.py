@@ -282,6 +282,27 @@ def calculate_gain_percentage(initial_value, final_value):
     
     return ((final_value / initial_value) - 1) * 100
 
+def log_ticker_test_results(log_dir, ticker, test_date, transactions):
+    """
+    Create a log file for a ticker's test results with last 5 transactions.
+    """
+    # Create ticker-specific log file
+    log_file = os.path.join(log_dir, f"{ticker.lower()}_test_history.log")
+    
+    # Get last 5 transactions
+    last_transactions = transactions[-5:] if len(transactions) > 5 else transactions
+    
+    with open(log_file, 'a') as f:
+        f.write(f"\n=== Test Run: {test_date} ===\n")
+        f.write(f"Last {len(last_transactions)} transactions:\n")
+        f.write("Date         Action  Price    Shares\n")
+        f.write("-" * 40 + "\n")
+        
+        for trans in last_transactions:
+            date = trans['date'].strftime('%Y-%m-%d')
+            f.write(f"{date}  {trans['type']:<6}  ${trans['price']:<7.2f}  {trans['shares']}\n")
+        f.write("\n")
+
 def main():
     # Create argument parser
     parser = argparse.ArgumentParser(
@@ -410,8 +431,11 @@ def main():
         logger.info(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         try:
-            # Define result filename
+            # Define result filename  
             result_file = os.path.join(args.output_dir, f"{ticker.lower()}_test_results.txt")
+            
+            # Get current timestamp for the test
+            test_date = datetime.now()
             
             # Redirect logging to result file during this test
             result_logger = logging.getLogger(f'test_logger_{ticker}')
@@ -438,6 +462,15 @@ def main():
             
             # Add initial_capital to test_results for gain percentage calculation
             test_results['initial_capital'] = args.initial_capital
+            
+            # Log the ticker's test results with last 5 transactions
+            if 'transactions' in test_results:
+                log_ticker_test_results(
+                    args.log_dir,
+                    ticker, 
+                    test_date.strftime("%Y-%m-%d %H:%M:%S"),
+                    test_results['transactions']
+                )
             
             # Check if the ticker passes performance criteria
             is_pass, failure_reason = check_ticker_performance(test_results, args.min_gain_pct)
