@@ -59,3 +59,11 @@ Date         Action  Price    Shares
 2025-06-26  SELL    $497.45   28.0
 2025-07-01  BUY     $492.05   28.0
 
+
+=== Test Run: 2025-07-02 23:19:09 ===
+Last 2 transactions:
+Date         Action  Price    Shares
+----------------------------------------
+2025-04-08  BUY     $353.91   28.0
+2025-06-27  SELL    $495.94   28.0
+
