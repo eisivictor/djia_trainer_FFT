@@ -38,7 +38,7 @@ jobs:
         END_DATE=$(date +"%Y-%m-%d")
         START_DATE=$(date -d "4 days ago" +"%Y-%m-%d")
         echo "Testing from $START_DATE to $END_DATE"        
-        python djia_tester.py --overwrite-db --tickers MSFT,NVDA --remove-ohlcv --min-holding-days 5 --min_days_between_trades 2 --start-date $START_DATE --end-date $END_DATE
+        python djia_tester.py --overwrite-db --tickers NVDA --remove-ohlcv --min-holding-days 5 --min_days_between_trades 2 --start-date $START_DATE --end-date $END_DATE
     #- name: create buy sell jpg
     #  run: python djia_show_db.py --output-image djia_buy_sell.jpg
     - name: commit changes
