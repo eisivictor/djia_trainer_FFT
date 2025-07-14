@@ -45,6 +45,10 @@ def get_parser():
                         help='Initial capital')
     parser.add_argument('--period', type=int, default=1,
                         help='Data period in years')
+    parser.add_argument('--start-date', type=str,
+                        help='Start date for training data (YYYY-MM-DD format)')
+    parser.add_argument('--end-date', type=str,
+                        help='End date for training data (YYYY-MM-DD format)')
     parser.add_argument('--skip-existing', action='store_true',
                         help='Skip tickers that already have a trained model')
     parser.add_argument('--tickers', type=str,
@@ -116,6 +120,16 @@ def get_tickers(args):
 
 def get_training_params(args):
     """Extract training parameters from command line arguments."""
+    # Calculate start and end dates based on period if not explicitly provided
+    start_date = args.start_date
+    end_date = args.end_date
+    
+    # If period is set and no specific dates provided, calculate dates
+    if args.period and not start_date and not end_date:
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=args.period * 365)).strftime('%Y-%m-%d')
+    
     return {
         "lookback": args.lookback,
         "gamma": args.gamma,
@@ -128,6 +142,8 @@ def get_training_params(args):
         "episodes": args.episodes,
         "initial_capital": args.initial_capital,
         "period": args.period,
+        "start_date": start_date,
+        "end_date": end_date,
         "buying_fee_pct": args.buying_fee_pct,
         "selling_fee_pct": args.selling_fee_pct,
         "min_holding_days": args.min_holding_days,
@@ -195,12 +211,16 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
     
 
     try:
+        # Create a copy of training_params without period for train_model, but keep start_date and end_date
+        model_params = training_params.copy()
+        model_params.pop('period', None)
+        
         # Train the model for this ticker
         agent, data = train_model(
             thread_logger,
             ticker=ticker,
             model_filename=existing_weights_file,            
-            **training_params
+            **model_params
         )        
                 
         # Record success
@@ -210,9 +230,9 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
         thread_logger.info(f"[{ticker}] Elapsed time: {elapsed_time:.2f} seconds")
         
         if resumed:
-            thread_logger.info(f"[{ticker}] ✓ Successfully continued training model in {elapsed_time:.2f} seconds")
+            thread_logger.info(f"[{ticker}] Successfully continued training model in {elapsed_time:.2f} seconds")
         else:
-            thread_logger.info(f"[{ticker}] ✓ Successfully trained new model in {elapsed_time:.2f} seconds")
+            thread_logger.info(f"[{ticker}] Successfully trained new model in {elapsed_time:.2f} seconds")
             
         return status, elapsed_time, None, thread_log_file
         
@@ -222,12 +242,12 @@ def train_ticker(ticker, training_params, models_dir, args, timestamp):
         thread_logger.info(f"[{ticker}] Status: Failed")
         thread_logger.info(f"[{ticker}] Error: {str(e)}")
         thread_logger.info(f"[{ticker}] Elapsed time: {elapsed_time:.2f} seconds")
-        thread_logger.info(f"[{ticker}] ✗ Failed to train model: {str(e)}")
+        thread_logger.info(f"[{ticker}] Failed to train model: {str(e)}")
         # Print full traceback
         error_traceback = traceback.format_exc()
         thread_logger.info(f"[{ticker}] Full Traceback:\n{error_traceback}")
             
-        return "failed", elapsed_time, str(e)
+        return "failed", elapsed_time, str(e), thread_log_file
 
 def train_djia_models(args=None):
     """
@@ -323,6 +343,12 @@ def train_djia_models(args=None):
                             logger.info(thread_log_content)
                             logger.info("--- End of detailed log ---\n")          
             
+                        # Close all handlers for the thread logger before removing the file
+                        thread_logger = logging.getLogger(f"{ticker}_logger")
+                        for handler in thread_logger.handlers[:]:
+                            handler.close()
+                            thread_logger.removeHandler(handler)
+                        
                         os.remove(thread_log_file)
 
                 except Exception as exc:
@@ -347,6 +373,12 @@ def train_djia_models(args=None):
                     logger.info(f"\n--- Detailed log for {ticker} ---\n")
                     logger.info(thread_log_content)
                     logger.info("--- End of detailed log ---\n")
+                
+                # Close all handlers for the thread logger before removing the file
+                thread_logger = logging.getLogger(f"{ticker}_logger")
+                for handler in thread_logger.handlers[:]:
+                    handler.close()
+                    thread_logger.removeHandler(handler)
                 
                 os.remove(thread_log_file)
             

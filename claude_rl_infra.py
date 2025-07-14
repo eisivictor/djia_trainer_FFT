@@ -585,7 +585,18 @@ def test_agent(logger, env, agent):
 
     while not done:
         action = agent.act(state, is_training=False)
-        #print(f"VICTOR - current_step={env.current_step} data={env.processed_df.iloc[env.current_step]} action={action} balance={env.balance} shares_held={env.shares_held} net_worth={env.net_worth}")
+        
+        # Get current date and price for logging
+        current_date = env.df.index[env.current_step]
+        current_price = env.df.iloc[env.current_step]['Close']
+        
+        # Map action to readable decision
+        action_names = {0: "HOLD", 1: "BUY", 2: "SELL"}
+        action_name = action_names.get(action, "UNKNOWN")
+        
+        # Log the model's decision for this date
+        logger.info(f"Date: {current_date.strftime('%Y-%m-%d')}, Price: ${current_price:.2f}, Decision: {action_name}, Balance: ${env.balance:.2f}, Shares: {env.shares_held}")
+        
         next_state, reward, done, info = env.step(action)
         state = next_state
 
@@ -730,14 +741,23 @@ def testing_agent(logger, name, test_env, agent, data_frame, loopback_window_siz
 
 
 # Function to fetch historical data
-def get_historical_data(ticker, period=5):
+def get_historical_data(ticker, period=None, start_date=None, end_date=None, lookback_buffer=60):
     import os
     import pandas as pd
     import yfinance as yf
     
     # Directory for saving/loading historical data
     folder_path = "djia_historical_data"
-    filename = os.path.join(folder_path, f"{ticker.replace('.', '_').lower()}_historical_data.csv")
+    
+    # Create filename based on parameters
+    if start_date and end_date:
+        filename_suffix = f"{start_date}_{end_date}"
+    elif period:
+        filename_suffix = f"period_{period}y"
+    else:
+        filename_suffix = "default"
+    
+    filename = os.path.join(folder_path, f"{ticker.replace('.', '_').lower()}_{filename_suffix}_historical_data.csv")
     
     # Check environment variables
     save_to_file = os.environ.get('SAVE_DATA_TO_FILE', 'false').lower() == 'true'
@@ -752,18 +772,38 @@ def get_historical_data(ticker, period=5):
         except Exception as e:
             print(f"Error loading from file: {e}. Falling back to downloading data.")
     
-    # Download data if not loading from file or if loading failed
-    start_date = pd.Timestamp.now() - pd.DateOffset(years=period)
-    #start_date = pd.Timestamp.now() - pd.DateOffset(days=100)
-
-    #data = yf.download(ticker, period=period, end=end_date)
-    data = yf.download(ticker)
+    # Download data
+    if start_date and end_date:
+        # Calculate extended start date to include lookback buffer for technical indicators
+        # We need extra days for indicators like Ichimoku (52 days), plus safety buffer
+        extended_start = pd.to_datetime(start_date) - pd.DateOffset(days=lookback_buffer)
+        extended_start_str = extended_start.strftime('%Y-%m-%d')
+        
+        print(f"Downloading {ticker} data from {extended_start_str} to {end_date} (extended for lookback)")
+        print(f"  Requested period: {start_date} to {end_date}")
+        print(f"  Extended start by {lookback_buffer} days for technical indicators")
+        
+        # Download with extended start date
+        data = yf.download(ticker, start=extended_start_str, end=end_date)
+        
+        # Mark the actual start date for reference
+        if not data.empty:
+            data.attrs['requested_start_date'] = start_date
+            data.attrs['extended_start_date'] = extended_start_str
+    elif period:
+        # Use period (backwards compatibility)
+        start_date_calc = pd.Timestamp.now() - pd.DateOffset(years=period)
+        print(f"Downloading {ticker} data for {period} years (from {start_date_calc.strftime('%Y-%m-%d')} to present)")
+        data = yf.download(ticker, start=start_date_calc)
+    else:
+        # Default: download all available data
+        print(f"Downloading all available {ticker} data")
+        data = yf.download(ticker)
     
     # Check if data was downloaded successfully (not empty)
     if not data.empty:
         data.columns = [col[0] for col in data.columns]
-        # Filter the DataFrame to include only data from the last year
-        data = data[data.index >= start_date]
+        print(f"Downloaded {len(data)} days of data for {ticker}")
         
         # Save to file if environment variable is set
         if save_to_file:
@@ -773,5 +813,7 @@ def get_historical_data(ticker, period=5):
             # Save the data
             data.to_csv(filename)
             print(f"Data saved to {filename}")
+    else:
+        print(f"No data downloaded for {ticker}")
     
     return data

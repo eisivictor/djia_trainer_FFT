@@ -4,7 +4,7 @@ import os
 import logging
 
 def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, learning_rate, epsilon_initial, 
-               epsilon_final, epsilon_decay, memory_size, episodes, initial_capital, period, use_fft=True,
+               epsilon_final, epsilon_decay, memory_size, episodes, initial_capital, start_date=None, end_date=None, use_fft=True,
                buying_fee_pct=0.005, selling_fee_pct=0.005, min_holding_days=0, min_days_between_trades=0,
                remove_ohlcv=True):
     """
@@ -22,7 +22,8 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     - memory_size: Replay memory size
     - episodes: Training episodes
     - initial_capital: Initial capital
-    - period: Data period in years
+    - start_date: Start date for training data (YYYY-MM-DD format)
+    - end_date: End date for training data (YYYY-MM-DD format)
     
     Returns:
     - agent: Trained DQN agent
@@ -30,7 +31,7 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     """
     # Get stock data
     logger.info(f"Fetching {ticker} historical data...")
-    data = get_historical_data(ticker, period=period)
+    data = get_historical_data(ticker, start_date=start_date, end_date=end_date)
     
     # Create training environment
     train_env = StockTradingEnv(
@@ -63,7 +64,7 @@ def train_model(logger, ticker, model_filename, lookback, gamma, batch_size, lea
     
     return agent, data
 
-def test_model(logger, ticker, lookback, initial_capital, period, model_weights_path=None, remove_ohlcv=True,
+def test_model(logger, ticker, lookback, initial_capital, start_date=None, end_date=None, model_weights_path=None, remove_ohlcv=True,
                min_holding_days=0, min_days_between_trades=0, 
                agent=None, data=None, use_fft=True,
                buying_fee_pct=0.005, selling_fee_pct=0.005):
@@ -74,7 +75,8 @@ def test_model(logger, ticker, lookback, initial_capital, period, model_weights_
     - ticker: Stock ticker symbol
     - lookback: Lookback window size
     - initial_capital: Initial capital
-    - period: Data period in years
+    - start_date: Start date for test data (YYYY-MM-DD format)
+    - end_date: End date for test data (YYYY-MM-DD format)
     - model_weights_path: Path to the model weights file
     - agent: Optional pre-trained agent (if None, will load from saved weights)
     - data: Optional historical data (if None, will fetch new data)
@@ -87,7 +89,7 @@ def test_model(logger, ticker, lookback, initial_capital, period, model_weights_
         # Get stock data if not provided
         if data is None:
             logger.info(f"Fetching {ticker} historical data for testing...")
-            data = get_historical_data(ticker, period)
+            data = get_historical_data(ticker, start_date=start_date, end_date=end_date)
 
         #from IPython.core.debugger import Pdb; Pdb().set_trace()
         
@@ -142,7 +144,8 @@ def main():
     parser.add_argument('--memory_size', type=int, default=10000, help='Replay memory size (default: 10000)')
     parser.add_argument('--episodes', type=int, default=40, help='Training episodes (default: 40)')
     parser.add_argument('--initial_capital', type=float, default=10000, help='Initial capital (default: 10000)')
-    parser.add_argument('--period', type=int, default=1, help='Data period in years (default: 1)')
+    parser.add_argument('--start_date', type=str, help='Start date for data (YYYY-MM-DD format)')
+    parser.add_argument('--end_date', type=str, help='End date for data (YYYY-MM-DD format)')
     parser.add_argument('--mode', type=str, choices=['train', 'test', 'both'], default='both', 
                         help='Operation mode: train, test, or both (default: both)')
     parser.add_argument('--min_holding_days', type=int, default=0, 
@@ -164,17 +167,20 @@ def main():
             logger, args.ticker, f"{args.ticker.lower()}_trading_model.keras", 
             args.lookback, args.gamma, args.batch_size, args.learning_rate,
             args.epsilon_initial, args.epsilon_final, args.epsilon_decay,
-            args.memory_size, args.episodes, args.initial_capital, args.period,
+            args.memory_size, args.episodes, args.initial_capital, 
+            start_date=args.start_date, end_date=args.end_date,
             min_holding_days=args.min_holding_days, min_days_between_trades=args.min_days_between_trades
         )
         
         # If both modes, use the trained agent and data for testing
         if args.mode == 'both':
-            test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, 
+            test_model(logger, args.ticker, args.lookback, args.initial_capital, 
+                      start_date=args.start_date, end_date=args.end_date,
                       agent=agent, data=data, min_holding_days=args.min_holding_days)
     
     elif args.mode == 'test':
         # Only test the model using saved weights
         model_filename = f"{args.ticker.lower()}_trading_model.keras"
-        test_model(logger, args.ticker, args.lookback, args.initial_capital, args.period, 
+        test_model(logger, args.ticker, args.lookback, args.initial_capital, 
+                  start_date=args.start_date, end_date=args.end_date,
                   model_weights_path=model_filename, min_holding_days=args.min_holding_days)

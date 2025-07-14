@@ -327,6 +327,10 @@ def main():
                         help='Number of arbitrary tickers to be chosen for testing')
     parser.add_argument('--period', type=int, default=1,
                         help='Data period in years')
+    parser.add_argument('--start-date', type=str,
+                        help='Start date for test data (YYYY-MM-DD format)')
+    parser.add_argument('--end-date', type=str,
+                        help='End date for test data (YYYY-MM-DD format)')
     parser.add_argument('--overwrite-db', action='store_true',
                         help='Overwrite all existing transactions in the database with current calculated transactions')
     parser.add_argument('--min-gain-pct', type=float, default=50.0,
@@ -446,12 +450,23 @@ def main():
             
             # Test the model for this ticker
             # Pass all agent-related arguments to ensure full compatibility
+            
+            # Calculate start and end dates from period if not provided
+            start_date = args.start_date
+            end_date = args.end_date
+            
+            if args.period and not start_date and not end_date:
+                from datetime import timedelta
+                end_date = datetime.now().strftime('%Y-%m-%d')
+                start_date = (datetime.now() - timedelta(days=args.period * 365)).strftime('%Y-%m-%d')
+            
             test_results = test_model(
                 result_logger, 
                 ticker=ticker, 
                 lookback=args.lookback,
                 initial_capital=args.initial_capital,
-                period=args.period,
+                start_date=start_date,
+                end_date=end_date,
                 model_weights_path=model_file,  # Pass the model weights path
                 remove_ohlcv=args.remove_ohlcv,
                 min_holding_days= args.min_holding_days,
@@ -508,7 +523,7 @@ def main():
                 successful_tickers.append(ticker)
                 logger.info(f"Status: Success")
                 logger.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-                logger.info(f"✓ Successfully tested model for {ticker} in {elapsed_time:.2f} seconds")
+                logger.info(f"[SUCCESS] Successfully tested model for {ticker} in {elapsed_time:.2f} seconds")
                 
                 # Log performance metrics
                 if 'rl_final_value' in test_results and 'buy_hold_final_value' in test_results:
@@ -526,7 +541,7 @@ def main():
                 logger.info(f"Status: Failed (Performance)")
                 logger.info(f"Failure Reason: {failure_reason}")
                 logger.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-                logger.info(f"✗ Model for {ticker} failed performance criteria: {failure_reason}")
+                logger.info(f"[FAILED] Model for {ticker} failed performance criteria: {failure_reason}")
                 
                 # Log transaction count if that's the failure reason
                 if 'transactions' in test_results:
@@ -561,7 +576,7 @@ def main():
             logger.info(f"Full Traceback:\n{error_traceback}")
             
             logger.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-            logger.info(f"✗ Failed to test model for {ticker}: {str(e)}")            
+            logger.info(f"[ERROR] Failed to test model for {ticker}: {str(e)}")            
     
     # Write summary
     logger.info(f"\n\n--- Testing Summary ---")
