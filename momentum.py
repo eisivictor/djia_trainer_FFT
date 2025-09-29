@@ -13,11 +13,62 @@ import os
 import sys
 import csv
 
-def fetch_data(ticker, start_date, end_date):
+def fetch_data(ticker, start_date, end_date, interval='1d'):
     """
     Fetch historical stock data for a given ticker
     """
-    stock_data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True)
+    try:
+        if interval in ['5m', '10m', '30m']:
+            # Check if date range exceeds Yahoo Finance's limitations for intraday data
+            days_difference = (end_date - start_date).days
+            
+            # Yahoo Finance restrictions:
+            # - 5m/10m/30m data: limited to last 60 days
+            # - 1h data: limited to last 730 days (2 years)
+            max_days = 60  # Maximum allowed days for intraday data
+            
+            if days_difference > max_days:
+                print(f"Warning: Yahoo Finance only provides {interval} intraday data for the last {max_days} days.")
+                print(f"Adjusting start date from {start_date.strftime('%Y-%m-%d')} to {(end_date - timedelta(days=max_days)).strftime('%Y-%m-%d')}.")
+                start_date = end_date - timedelta(days=max_days)
+            
+            trading_days = min(days_difference, max_days)
+            # To get `trading_days` of data, we fetch a larger calendar period to account for weekends/holidays.
+            # A 1.8 multiplier is a safe margin. Max is 60 calendar days for intraday intervals.
+            calendar_days_to_fetch = min(int(trading_days * 1.8) + 5, max_days)
+            
+            print(f"Fetching up to {calendar_days_to_fetch} calendar days of {interval} intraday data...")
+            stock_data = yf.download(ticker, period=f"{calendar_days_to_fetch}d", interval=interval, auto_adjust=True)
+
+            if not stock_data.empty:
+                # If yfinance returns a multi-index, flatten it
+                if isinstance(stock_data.columns, pd.MultiIndex):
+                    stock_data.columns = stock_data.columns.droplevel(1)
+
+                # Filter for regular trading hours (9:30 AM to 4:00 PM)
+                stock_data = stock_data.between_time('09:30', '16:00')
+                
+                # Get the unique dates from the index and select the last `trading_days`
+                unique_trading_days = stock_data.index.normalize().unique()
+                if len(unique_trading_days) > trading_days:
+                    last_n_trading_days = unique_trading_days[-trading_days:]
+                    # Filter the DataFrame to include only the data for these days
+                    stock_data = stock_data[stock_data.index.normalize().isin(last_n_trading_days)]
+        else:
+            stock_data = yf.download(ticker, start=start_date, end=end_date, interval=interval, auto_adjust=True)
+    
+    except Exception as e:
+        error_msg = str(e)
+        if "data not available" in error_msg and "The requested range must be within the last 60 days" in error_msg:
+            print(f"ERROR: Yahoo Finance restricts {interval} intraday data to the last 60 days.")
+            print(f"Please adjust your date range to be within the last 60 days from {end_date.strftime('%Y-%m-%d')}.")
+            return pd.DataFrame()  # Return empty DataFrame
+        elif "No data found" in error_msg:
+            print(f"ERROR: No data found for ticker {ticker}. Please check if the ticker symbol is correct.")
+            return pd.DataFrame()
+        else:
+            print(f"ERROR fetching data for {ticker}: {error_msg}")
+            return pd.DataFrame()
     
     # Fix MultiIndex columns if present - flatten to single level
     if isinstance(stock_data.columns, pd.MultiIndex):
@@ -193,19 +244,34 @@ def calculate_realized_returns(data):
     
     return data
 
-def calculate_metrics(data):
+def calculate_metrics(data, interval='1d'):
     """
     Calculate performance metrics
     """
     # Annualized return
     days = (data.index[-1] - data.index[0]).days
-    ann_return = (data['cumulative_return'].iloc[-1] ** (365/days)) - 1
+    if days == 0: days = 1 # Avoid division by zero for short periods
+
+    ann_return = (data['cumulative_return'].iloc[-1] ** (365.0/days)) - 1
     
     # Overall return (total return for the entire period)
     overall_return = data['cumulative_return'].iloc[-1] - 1
     
+    # Adjust periods per year for volatility calculation based on interval
+    if interval == '5m':
+        # 78 5-min intervals in a trading day (9:30-16:00), 252 trading days
+        periods_per_year = 252 * 78
+    elif interval == '10m':
+        # 39 10-min intervals in a trading day (9:30-16:00), 252 trading days
+        periods_per_year = 252 * 39
+    elif interval == '30m':
+        # 13 30-min intervals in a trading day (9:30-16:00), 252 trading days
+        periods_per_year = 252 * 13
+    else: # '1d'
+        periods_per_year = 252
+
     # Sharpe ratio (annualized)
-    ann_volatility = data['strategy_return'].std() * np.sqrt(252)
+    ann_volatility = data['strategy_return'].std() * np.sqrt(periods_per_year)
     sharpe_ratio = ann_return / ann_volatility if ann_volatility != 0 else 0
     
     # Maximum drawdown
@@ -221,64 +287,16 @@ def calculate_metrics(data):
         'Maximum Drawdown': max_drawdown
     }
 
-def backtest_momentum(ticker, start_date, end_date, window=20, threshold=0):
-    """
-    Backtest momentum strategy for a given ticker
-    """
-    # Fetch data
-    data = fetch_data(ticker, start_date, end_date)
-    
-    # Calculate momentum and generate signals
-    data = calculate_momentum(data, window)
-    data = generate_signals(data, threshold)
-    
-    # Calculate returns
-    data = calculate_returns(data)
-    
-    # Calculate metrics
-    metrics = calculate_metrics(data)
-    
-    # Plot results
-    plt.figure(figsize=(12, 8))
-    
-    plt.subplot(3, 1, 1)
-    plt.plot(data['Close'])
-    plt.title(f'{ticker} Price')
-    plt.grid(True)
-    
-    plt.subplot(3, 1, 2)
-    plt.plot(data['momentum'])
-    plt.axhline(y=threshold, color='g', linestyle='--')
-    plt.axhline(y=-threshold, color='r', linestyle='--')
-    plt.title(f'{window}-Day Momentum')
-    plt.grid(True)
-    
-    plt.subplot(3, 1, 3)
-    plt.plot(data['cumulative_return'], label='cumulative return')    
-    plt.title('Cumulative Returns')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.tight_layout()
-    plt.show()
-    
-    # Print metrics
-    print(f"Backtest Results for {ticker} Momentum Strategy:")
-    for metric, value in metrics.items():
-        print(f"{metric}: {value:.4f}")
-    
-    
-    # Explain the metrics
-    #explain_metrics()
-    
-    return data, metrics
-
-def backtest_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=200):
+def backtest_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=200, interval='1d'):
     """
     Backtest SMA crossover strategy for a given ticker using realized returns
     """
     # Fetch data
-    data = fetch_data(ticker, start_date, end_date)
+    data = fetch_data(ticker, start_date, end_date, interval=interval)
+    
+    if data.empty:
+        print(f"Error: No data available for {ticker} with interval {interval} in the specified date range.")
+        return None, {}
     
     if len(data) < long_sma:
         print(f"Warning: Not enough data points ({len(data)}) for calculating SMA{long_sma}. Need at least {long_sma}.")
@@ -314,7 +332,7 @@ def backtest_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=2
     data = calculate_realized_returns(data)
     
     # Calculate metrics
-    metrics = calculate_metrics(data)
+    metrics = calculate_metrics(data, interval=interval)
     
     # Create interactive plotly figure with subplots
     fig = make_subplots(rows=3, cols=1, 
@@ -324,71 +342,160 @@ def backtest_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=2
                         vertical_spacing=0.15,
                         shared_xaxes=True)
     
-    # Add price to first subplot
-    fig.add_trace(go.Scatter(
-        x=data.index, 
-        y=data['Close'], 
-        name='Price', 
-        line=dict(color='black', width=1),
-        connectgaps=True
-    ), row=1, col=1)
-    
-    # Safely add SMA lines - check if there are valid data points first
-    if not data[short_col].isna().all():
-        sma_short_data = data.dropna(subset=[short_col])
+    # For intraday data, use numerical indices to create continuous plots
+    if interval == '5m':
+        # Create a numerical x-axis without gaps
+        x_axis = list(range(len(data)))
+        index_map = pd.Series(x_axis, index=data.index)
+        
+        # Add price to first subplot
         fig.add_trace(go.Scatter(
-            x=sma_short_data.index, 
-            y=sma_short_data[short_col], 
-            name=f'SMA {short_sma}', 
-            line=dict(color='blue', width=1.5),
+            x=x_axis, 
+            y=data['Close'], 
+            name='Price', 
+            line=dict(color='black', width=1),
+            hovertext=[f"{time.strftime('%Y-%m-%d %H:%M')} - ${float(price):.2f}" for time, price in zip(data.index, data['Close'])],
+            hoverinfo='text'
         ), row=1, col=1)
-    
-    if not data[long_col].isna().all():
-        sma_long_data = data.dropna(subset=[long_col])
+        
+        # Safely add SMA lines - check if there are valid data points first
+        if not data[short_col].isna().all():
+            sma_short_data = data.dropna(subset=[short_col])
+            x_sma_short = index_map[sma_short_data.index].values
+            fig.add_trace(go.Scatter(
+                x=x_sma_short, 
+                y=sma_short_data[short_col], 
+                name=f'SMA {short_sma}', 
+                line=dict(color='blue', width=1.5),
+            ), row=1, col=1)
+        
+        if not data[long_col].isna().all():
+            sma_long_data = data.dropna(subset=[long_col])
+            x_sma_long = index_map[sma_long_data.index].values
+            fig.add_trace(go.Scatter(
+                x=x_sma_long, 
+                y=sma_long_data[long_col], 
+                name=f'SMA {long_sma}', 
+                line=dict(color='red', width=1.5),
+            ), row=1, col=1)
+        
+        # Add buy/sell signals as scatter points
+        golden_cross = data[data['Crossover'] == 1]
+        death_cross = data[data['Crossover'] == -1]
+        
+        if not golden_cross.empty:
+            x_golden = index_map[golden_cross.index].values
+            fig.add_trace(go.Scatter(
+                x=x_golden, 
+                y=golden_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=12, color='green'),
+                name='Golden Cross (Buy)'
+            ), row=1, col=1)
+        
+        if not death_cross.empty:
+            x_death = index_map[death_cross.index].values
+            fig.add_trace(go.Scatter(
+                x=x_death, 
+                y=death_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-down', size=12, color='red'),
+                name='Death Cross (Sell)'
+            ), row=1, col=1)
+        
+        # Add returns to subplots
         fig.add_trace(go.Scatter(
-            x=sma_long_data.index, 
-            y=sma_long_data[long_col], 
-            name=f'SMA {long_sma}', 
-            line=dict(color='red', width=1.5),
-        ), row=1, col=1)
-    
-    # Add buy/sell signals as scatter points
-    golden_cross = data[data['Crossover'] == 1]
-    death_cross = data[data['Crossover'] == -1]
-    
-    if not golden_cross.empty:
+            x=x_axis, 
+            y=data['cumulative_return'],
+            name='Mark-to-Market Returns',
+            line=dict(color='blue', width=1.5)
+        ), row=2, col=1)
+        
         fig.add_trace(go.Scatter(
-            x=golden_cross.index, 
-            y=golden_cross[short_col],
-            mode='markers',
-            marker=dict(symbol='triangle-up', size=12, color='green'),
-            name='Golden Cross (Buy)'
-        ), row=1, col=1)
-    
-    if not death_cross.empty:
+            x=x_axis, 
+            y=data['cumulative_realized_return'],
+            name='Realized Returns',
+            line=dict(color='green', width=1.5)
+        ), row=3, col=1)
+        
+        # Format x-axis to show dates at day boundaries
+        date_changes = data.index.normalize().diff() != pd.Timedelta(0)
+        tick_indices = [i for i, changed in enumerate(date_changes) if changed]
+        tick_labels = [data.index[i].strftime('%Y-%m-%d') for i in tick_indices]
+        
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=tick_indices,
+            ticktext=tick_labels,
+            tickangle=45
+        )
+    else:
+        # Regular daily data plotting
+        # Add price to first subplot
         fig.add_trace(go.Scatter(
-            x=death_cross.index, 
-            y=death_cross[short_col],
-            mode='markers',
-            marker=dict(symbol='triangle-down', size=12, color='red'),
-            name='Death Cross (Sell)'
+            x=data.index, 
+            y=data['Close'], 
+            name='Price', 
+            line=dict(color='black', width=1),
+            connectgaps=True
         ), row=1, col=1)
-    
-    # Add mark-to-market returns to second subplot
-    fig.add_trace(go.Scatter(
-        x=data.index, 
-        y=data['cumulative_return'],
-        name='Mark-to-Market Returns',
-        line=dict(color='blue', width=1.5)
-    ), row=2, col=1)
-    
-    # Add realized returns to third subplot
-    fig.add_trace(go.Scatter(
-        x=data.index, 
-        y=data['cumulative_realized_return'],
-        name='Realized Returns',
-        line=dict(color='green', width=1.5)
-    ), row=3, col=1)
+        
+        # Safely add SMA lines - check if there are valid data points first
+        if not data[short_col].isna().all():
+            sma_short_data = data.dropna(subset=[short_col])
+            fig.add_trace(go.Scatter(
+                x=sma_short_data.index, 
+                y=sma_short_data[short_col], 
+                name=f'SMA {short_sma}', 
+                line=dict(color='blue', width=1.5),
+            ), row=1, col=1)
+        
+        if not data[long_col].isna().all():
+            sma_long_data = data.dropna(subset=[long_col])
+            fig.add_trace(go.Scatter(
+                x=sma_long_data.index, 
+                y=sma_long_data[long_col], 
+                name=f'SMA {long_sma}', 
+                line=dict(color='red', width=1.5),
+            ), row=1, col=1)
+        
+        # Add buy/sell signals as scatter points
+        golden_cross = data[data['Crossover'] == 1]
+        death_cross = data[data['Crossover'] == -1]
+        
+        if not golden_cross.empty:
+            fig.add_trace(go.Scatter(
+                x=golden_cross.index, 
+                y=golden_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=12, color='green'),
+                name='Golden Cross (Buy)'
+            ), row=1, col=1)
+        
+        if not death_cross.empty:
+            fig.add_trace(go.Scatter(
+                x=death_cross.index, 
+                y=death_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-down', size=12, color='red'),
+                name='Death Cross (Sell)'
+            ), row=1, col=1)
+        
+        # Add mark-to-market returns to second subplot
+        fig.add_trace(go.Scatter(
+            x=data.index, 
+            y=data['cumulative_return'],
+            name='Mark-to-Market Returns',
+            line=dict(color='blue', width=1.5)
+        ), row=2, col=1)
+        
+        # Add realized returns to third subplot
+        fig.add_trace(go.Scatter(
+            x=data.index, 
+            y=data['cumulative_realized_return'],
+            name='Realized Returns',
+            line=dict(color='green', width=1.5)
+        ), row=3, col=1)
     
     # Update layout with improved styling
     fig.update_layout(
@@ -406,6 +513,9 @@ def backtest_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=2
         margin=dict(l=50, r=50, t=80, b=50),  # Adjust margins
         template="plotly_white",  # Use a clean template with grid
     )
+    
+    # Make sure all subplots have synchronized zooming behavior
+    fig.update_xaxes(matches='x')
     
     # Add grid lines and improve axes
     fig.update_xaxes(
@@ -514,7 +624,8 @@ def predict_sma_values_tsm(data, buy_prediction_days=7, sell_prediction_days=7, 
                         try:
                             # Fit ARIMA model for short SMA
                             model_short_sma = ARIMA(history_short_sma, order=order)
-                            model_fit_short_sma = model_short_sma.fit(disp=0)  # Suppress output
+                            # Use a more widely supported method parameter
+                            model_fit_short_sma = model_short_sma.fit()
                             forecast_short_sma_buy = model_fit_short_sma.forecast(steps=buy_prediction_days)
                             forecast_short_sma_sell = model_fit_short_sma.forecast(steps=sell_prediction_days)
                             
@@ -523,15 +634,18 @@ def predict_sma_values_tsm(data, buy_prediction_days=7, sell_prediction_days=7, 
                             data.loc[current_idx, f'{short_col}_predicted_sell'] = forecast_short_sma_sell[-1]
                             short_sma_success = True
                             print(f"Successfully fit ARIMA{order} for {short_col} at {current_idx}")
-                        except Exception:
-                            # Continue to next model if this one fails
+                        except Exception as e:
+                            # Print detailed exception information
+                            print(f"ARIMA model {order} for {short_col} at {current_idx} failed with: {str(e)}")
+                            print(f"Exception type: {type(e).__name__}")
                             continue
                     
                     if not long_sma_success:
                         try:
                             # Fit ARIMA model for long SMA
                             model_long_sma = ARIMA(history_long_sma, order=order)
-                            model_fit_long_sma = model_long_sma.fit(disp=0)  # Suppress output
+                            # Use a more widely supported method parameter
+                            model_fit_long_sma = model_long_sma.fit()
                             forecast_long_sma_buy = model_fit_long_sma.forecast(steps=buy_prediction_days)
                             forecast_long_sma_sell = model_fit_long_sma.forecast(steps=sell_prediction_days)
                             
@@ -540,13 +654,15 @@ def predict_sma_values_tsm(data, buy_prediction_days=7, sell_prediction_days=7, 
                             data.loc[current_idx, f'{long_col}_predicted_sell'] = forecast_long_sma_sell[-1]
                             long_sma_success = True
                             print(f"Successfully fit ARIMA{order} for {long_col} at {current_idx}")
-                        except Exception:
-                            # Continue to next model if this one fails
+                        except Exception as e:
+                            # Print detailed exception information
+                            print(f"ARIMA model {order} for {long_col} at {current_idx} failed with: {str(e)}")
+                            print(f"Exception type: {type(e).__name__}")
                             continue
                     
-                    # If both models succeeded, break the loop
-                    if short_sma_success and long_sma_success:
-                        break
+                # If both models succeeded, break the loop
+                if short_sma_success and long_sma_success:
+                    break
                 
                 # If any model failed, fall back to linear prediction
                 if not (short_sma_success and long_sma_success):
@@ -648,7 +764,7 @@ def predict_sma_values_tsm(data, buy_prediction_days=7, sell_prediction_days=7, 
 
 def backtest_predicted_sma_strategy(ticker, start_date, end_date, short_sma=50, long_sma=200, 
                                    buy_prediction_days=7, sell_prediction_days=7, 
-                                   slope_window=5, prediction_method='linear'):
+                                   slope_window=5, prediction_method='linear', interval='1d'):
     """
     Backtest predicted SMA crossover strategy with time series forecasting
     
@@ -663,7 +779,11 @@ def backtest_predicted_sma_strategy(ticker, start_date, end_date, short_sma=50, 
     - prediction_method: Method for forecasting ('linear', 'arima', 'exp_smoothing')
     """
     # Fetch data
-    data = fetch_data(ticker, start_date, end_date)
+    data = fetch_data(ticker, start_date, end_date, interval=interval)
+    
+    if data.empty:
+        print(f"Error: No data available for {ticker} with interval {interval} in the specified date range.")
+        return None, {}
     
     if len(data) < long_sma:
         print(f"Warning: Not enough data points ({len(data)}) for calculating SMA{long_sma}. Need at least {long_sma}.")
@@ -702,7 +822,7 @@ def backtest_predicted_sma_strategy(ticker, start_date, end_date, short_sma=50, 
     data = calculate_realized_returns(data)
     
     # Calculate metrics
-    metrics = calculate_metrics(data)
+    metrics = calculate_metrics(data, interval=interval)
     
     # Create interactive plotly figure with subplots
     fig = make_subplots(rows=2, cols=1, 
@@ -711,88 +831,129 @@ def backtest_predicted_sma_strategy(ticker, start_date, end_date, short_sma=50, 
                         vertical_spacing=0.15,
                         shared_xaxes=True)
     
-    # Add price to first subplot
-    fig.add_trace(go.Scatter(
-        x=data.index, 
-        y=data['Close'], 
-        name='Price', 
-        line=dict(color='black', width=1),
-        connectgaps=True
-    ), row=1, col=1)
-    
-    # Safely add SMA lines
-    if not data[short_col].isna().all():
-        sma_short_data = data.dropna(subset=[short_col])
+    # For intraday data, use numerical indices to create continuous plots
+    if interval == '5m':
+        # Create a numerical x-axis without gaps
+        x_axis = list(range(len(data)))
+        index_map = pd.Series(x_axis, index=data.index)
+        
+        # Add price to first subplot
         fig.add_trace(go.Scatter(
-            x=sma_short_data.index, 
-            y=sma_short_data[short_col], 
-            name=f'SMA {short_sma}', 
-            line=dict(color='blue', width=1.5),
+            x=x_axis, 
+            y=data['Close'], 
+            name='Price', 
+            line=dict(color='black', width=1),
+            hovertext=[f"{time.strftime('%Y-%m-%d %H:%M')} - ${float(price):.2f}" for time, price in zip(data.index, data['Close'])],
+            hoverinfo='text'
         ), row=1, col=1)
         
-        # Add predicted short SMA line for buying
-        predicted_buy_col = f'{short_col}_predicted_buy'
-        if predicted_buy_col in data.columns and not data[predicted_buy_col].isna().all():
-            predicted_data = data.dropna(subset=[predicted_buy_col])
+        # Safely add SMA lines - check if there are valid data points first
+        if not data[short_col].isna().all():
+            sma_short_data = data.dropna(subset=[short_col])
+            x_sma_short = index_map[sma_short_data.index].values
             fig.add_trace(go.Scatter(
-                x=predicted_data.index, 
-                y=predicted_data[predicted_buy_col], 
-                name=f'Buy Predicted SMA {short_sma} (+{buy_prediction_days} days)', 
-                line=dict(color='green', width=1.5, dash='dash'),
-            ), row=1, col=1)
-    
-    if not data[long_col].isna().all():
-        sma_long_data = data.dropna(subset=[long_col])
-        fig.add_trace(go.Scatter(
-            x=sma_long_data.index, 
-            y=sma_long_data[long_col], 
-            name=f'SMA {long_sma}', 
-            line=dict(color='red', width=1.5),
-        ), row=1, col=1)
-        
-        # Add predicted long SMA line for buying
-        predicted_buy_col = f'{long_col}_predicted_buy'
-        if predicted_buy_col in data.columns and not data[predicted_buy_col].isna().all():
-            predicted_data = data.dropna(subset=[predicted_buy_col])
-            fig.add_trace(go.Scatter(
-                x=predicted_data.index, 
-                y=predicted_data[predicted_buy_col], 
-                name=f'Buy Predicted SMA {long_sma} (+{buy_prediction_days} days)', 
-                line=dict(color='green', width=1.5, dash='dash'),
+                x=x_sma_short, 
+                y=sma_short_data[short_col], 
+                name=f'SMA {short_sma}', 
+                line=dict(color='blue', width=1.5),
             ), row=1, col=1)
         
-        # Add predicted long SMA line for selling
-        predicted_sell_col = f'{long_col}_predicted_sell'
-        if predicted_sell_col in data.columns and not data[predicted_sell_col].isna().all():
-            predicted_data = data.dropna(subset=[predicted_sell_col])
+        if not data[long_col].isna().all():
+            sma_long_data = data.dropna(subset=[long_col])
+            x_sma_long = index_map[sma_long_data.index].values
             fig.add_trace(go.Scatter(
-                x=predicted_data.index, 
-                y=predicted_data[predicted_sell_col], 
-                name=f'Sell Predicted SMA {long_sma} (+{sell_prediction_days} days)', 
-                line=dict(color='red', width=1.5, dash='dash'),
+                x=x_sma_long, 
+                y=sma_long_data[long_col], 
+                name=f'SMA {long_sma}', 
+                line=dict(color='red', width=1.5),
             ), row=1, col=1)
-    
-    # Add buy/sell signals as scatter points
-    golden_cross = data[data['Predicted_Golden_Cross'] == 1]
-    death_cross = data[data['Predicted_Death_Cross'] == 1]
-    
-    if not golden_cross.empty:
+        
+        # Add buy/sell signals as scatter points
+        golden_cross = data[data['Predicted_Golden_Cross'] == 1]
+        death_cross = data[data['Predicted_Death_Cross'] == 1]
+        
+        if not golden_cross.empty:
+            x_golden = index_map[golden_cross.index].values
+            fig.add_trace(go.Scatter(
+                x=x_golden, 
+                y=golden_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=12, color='green'),
+                name='Predicted Golden Cross (Buy)'
+            ), row=1, col=1)
+        
+        if not death_cross.empty:
+            x_death = index_map[death_cross.index].values
+            fig.add_trace(go.Scatter(
+                x=x_death, 
+                y=death_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-down', size=12, color='red'),
+                name='Predicted Death Cross (Sell)'
+            ), row=1, col=1)
+        
+        # Format x-axis to show dates at day boundaries
+        date_changes = data.index.normalize().diff() != pd.Timedelta(0)
+        tick_indices = [i for i, changed in enumerate(date_changes) if changed]
+        tick_labels = [data.index[i].strftime('%Y-%m-%d') for i in tick_indices]
+        
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=tick_indices,
+            ticktext=tick_labels,
+            tickangle=45
+        )
+    else:
+        # Regular daily data plotting
+        # Add price to first subplot
         fig.add_trace(go.Scatter(
-            x=golden_cross.index, 
-            y=golden_cross[short_col],
-            mode='markers',
-            marker=dict(symbol='triangle-up', size=12, color='green'),
-            name='Predicted Golden Cross (Buy)'
+            x=data.index, 
+            y=data['Close'], 
+            name='Price', 
+            line=dict(color='black', width=1),
+            connectgaps=True
         ), row=1, col=1)
-    
-    if not death_cross.empty:
-        fig.add_trace(go.Scatter(
-            x=death_cross.index, 
-            y=death_cross[short_col],
-            mode='markers',
-            marker=dict(symbol='triangle-down', size=12, color='red'),
-            name='Predicted Death Cross (Sell)'
-        ), row=1, col=1)
+        
+        # Safely add SMA lines - check if there are valid data points first
+        if not data[short_col].isna().all():
+            sma_short_data = data.dropna(subset=[short_col])
+            fig.add_trace(go.Scatter(
+                x=sma_short_data.index, 
+                y=sma_short_data[short_col], 
+                name=f'SMA {short_sma}', 
+                line=dict(color='blue', width=1.5),
+            ), row=1, col=1)
+        
+        if not data[long_col].isna().all():
+            sma_long_data = data.dropna(subset=[long_col])
+            fig.add_trace(go.Scatter(
+                x=sma_long_data.index, 
+                y=sma_long_data[long_col], 
+                name=f'SMA {long_sma}', 
+                line=dict(color='red', width=1.5),
+            ), row=1, col=1)
+        
+        # Add buy/sell signals as scatter points
+        golden_cross = data[data['Predicted_Golden_Cross'] == 1]
+        death_cross = data[data['Predicted_Death_Cross'] == 1]
+        
+        if not golden_cross.empty:
+            fig.add_trace(go.Scatter(
+                x=golden_cross.index, 
+                y=golden_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-up', size=12, color='green'),
+                name='Predicted Golden Cross (Buy)'
+            ), row=1, col=1)
+        
+        if not death_cross.empty:
+            fig.add_trace(go.Scatter(
+                x=death_cross.index, 
+                y=death_cross[short_col],
+                mode='markers',
+                marker=dict(symbol='triangle-down', size=12, color='red'),
+                name='Predicted Death Cross (Sell)'
+            ), row=1, col=1)
     
     # Add realized returns directly to second subplot (skipping the mark-to-market subplot)
     fig.add_trace(go.Scatter(
@@ -818,6 +979,9 @@ def backtest_predicted_sma_strategy(ticker, start_date, end_date, short_sma=50, 
         margin=dict(l=50, r=50, t=80, b=50),  # Adjust margins
         template="plotly_white",  # Use a clean template with grid
     )
+    
+    # Make sure all subplots have synchronized zooming behavior
+    fig.update_xaxes(matches='x')
     
     # Add grid lines and improve axes
     fig.update_xaxes(
@@ -982,7 +1146,7 @@ def generate_predicted_sma_signals(data, print_signals=True):
     
     return data
 
-def has_open_buy_signal(ticker, days=365, strategy='predicted_sma', **strategy_params):
+def has_open_buy_signal(ticker, days=365, strategy='predicted_sma', interval='1d', **strategy_params):
     """
     Check if a ticker has an open buy signal (buy signal without a subsequent sell signal)
     
@@ -994,7 +1158,7 @@ def has_open_buy_signal(ticker, days=365, strategy='predicted_sma', **strategy_p
     
     try:
         # Fetch and process data based on strategy
-        data = fetch_data(ticker, start_date, end_date)
+        data = fetch_data(ticker, start_date, end_date, interval=interval)
         
         if len(data) < 200:
             print(f"Warning: Not enough data for {ticker}. Skipping.")
@@ -1049,7 +1213,7 @@ def has_open_buy_signal(ticker, days=365, strategy='predicted_sma', **strategy_p
         print(f"Error processing {ticker}: {str(e)}")
         return False, None, None, None, None
 
-def scan_tickers(tickers, days=365, strategy='predicted_sma', **strategy_params):
+def scan_tickers(tickers, days=365, strategy='predicted_sma', interval='1d', **strategy_params):
     """
     Scan multiple tickers for open buy signals and return results
     """
@@ -1062,7 +1226,7 @@ def scan_tickers(tickers, days=365, strategy='predicted_sma', **strategy_params)
             
         print(f"Scanning {ticker}...")
         has_signal, signal_date, signal_price, current_price, gain_loss_pct = has_open_buy_signal(
-            ticker, days, strategy, **strategy_params
+            ticker, days, strategy, interval, **strategy_params
         )
         
         if has_signal:
@@ -1124,18 +1288,18 @@ def parse_args():
                         help='Trading strategy to use: momentum, sma, or predicted_sma (default: predicted_sma)')
     parser.add_argument('-w', '--window', type=int, default=20, 
                         help='Momentum calculation window in days (default: 20, only for momentum strategy)')
-    parser.add_argument('-th', '--threshold', type=float, default=0.05, 
-                        help='Momentum threshold for signal generation (default: 0.05, only for momentum strategy)')
     parser.add_argument('-pb', '--buy_prediction_days', type=int, default=7, 
                         help='Number of days to predict ahead for buy signals (default: 7)')
     parser.add_argument('-ps', '--sell_prediction_days', type=int, default=7, 
                         help='Number of days to predict ahead for sell signals (default: 7)')
     parser.add_argument('-d', '--days', type=int, default=365*5, 
-                        help='Number of days to backtest (default: 5 years)')
+                        help='Number of days to backtest (default: 5 years). Ignored if interval is not 1d.')
     parser.add_argument('-sw', '--slope_window', type=int, default=5, 
                         help='Window (in days) used to calculate the slope of SMAs (default: 5)')
     parser.add_argument('-pm', '--prediction_method', type=str, choices=['linear', 'arima', 'exp_smoothing'], 
                         default='linear', help='Method for predicting future SMA values (default: linear)')
+    parser.add_argument('--interval', type=str, choices=['1d', '5m', '10m', '30m'], default='1d',
+                        help='Data interval for backtesting (default: 1d). Use 5m for 5-minute, 10m for 10-minute, or 30m for 30-minute intraday data (60-day period).')
     
     # Add arguments for SMA periods
     parser.add_argument('--short-sma', type=int, default=50,
@@ -1229,14 +1393,13 @@ if __name__ == "__main__":
         print(f"Scanning {len(tickers)} tickers using {args.strategy} strategy...")
         strategy_params = {
             'window': args.window,
-            'threshold': args.threshold,
             'buy_prediction_days': args.buy_prediction_days,
             'sell_prediction_days': args.sell_prediction_days,
             'slope_window': args.slope_window,
             'prediction_method': args.prediction_method
         }
         
-        results = scan_tickers(tickers, args.days, args.strategy, **strategy_params)
+        results = scan_tickers(tickers, args.days, args.strategy, args.interval, **strategy_params)
         save_scan_results(results, args.output)
         
     else:
@@ -1245,16 +1408,7 @@ if __name__ == "__main__":
         start_date = datetime.now() - timedelta(days=args.days)
         end_date = datetime.now()
         
-        if args.strategy == 'momentum':
-            print(f"Running momentum backtest for {ticker} with {args.window}-day window and {args.threshold} threshold...")
-            results, metrics = backtest_momentum(
-                ticker=ticker,
-                start_date=start_date,
-                end_date=end_date,
-                window=args.window,
-                threshold=args.threshold
-            )
-        elif args.strategy == 'predicted_sma':
+        if args.strategy == 'predicted_sma':
             print(f"Running predicted SMA backtest for {ticker} with {args.prediction_method} forecasting (SMAs: {args.short_sma}/{args.long_sma}, slope window: {args.slope_window}, buy: {args.buy_prediction_days}, sell: {args.sell_prediction_days} days)...")
             results, metrics = backtest_predicted_sma_strategy(
                 ticker=ticker,
@@ -1265,7 +1419,8 @@ if __name__ == "__main__":
                 buy_prediction_days=args.buy_prediction_days,
                 sell_prediction_days=args.sell_prediction_days,
                 slope_window=args.slope_window,
-                prediction_method=args.prediction_method
+                prediction_method=args.prediction_method,
+                interval=args.interval
             )
         else:  # args.strategy == 'sma'
             print(f"Running SMA crossover backtest for {ticker} (SMAs: {args.short_sma}/{args.long_sma})...")
@@ -1274,5 +1429,6 @@ if __name__ == "__main__":
                 start_date=start_date,
                 end_date=end_date,
                 short_sma=args.short_sma,
-                long_sma=args.long_sma
+                long_sma=args.long_sma,
+                interval=args.interval
             )
