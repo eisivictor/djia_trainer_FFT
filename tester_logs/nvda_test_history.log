@@ -2221,3 +2221,11 @@ Last 0 transactions:
 Date         Action  Price    Shares
 ----------------------------------------
 
+
+=== Test Run: 2026-05-02 22:42:20 ===
+Last 2 transactions:
+Date         Action  Price    Shares
+----------------------------------------
+2026-04-27  BUY     $216.61   45.0
+2026-04-30  BUY     $199.57   1.0
+
